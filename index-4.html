@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<title>Um jardim para você</title>
+<style>
+  :root { color-scheme: dark; --pink:#f5a9c9; --green:#8ed6a0; --gold:#f3d59a; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; width:100%; height:100%; overflow:hidden; background:#000; }
+  body { font-family: Georgia, "Times New Roman", serif; color:#fff; }
+  #scene { position:fixed; inset:0; width:100%; height:100%; display:block; background:#000; }
+  .start, .ending { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; flex-direction:column; text-align:center; padding:24px; }
+  .start { transition:opacity 1.5s ease; }
+  .start.hidden { opacity:0; pointer-events:none; }
+  .play { width:68px; height:68px; border-radius:50%; border:1px solid rgba(255,255,255,.72); color:#fff; background:rgba(255,255,255,.025); display:grid; place-items:center; cursor:pointer; transition:transform .3s, background .3s, box-shadow .3s; -webkit-tap-highlight-color:transparent; }
+  .play:active { transform:scale(.94); background:rgba(255,255,255,.12); }
+  .play svg { width:21px; height:21px; margin-left:3px; }
+  .hint { font-size:12px; letter-spacing:.22em; text-transform:uppercase; color:rgba(255,255,255,.58); margin-top:18px; }
+  .ending { opacity:0; pointer-events:none; transform:translateY(8px); transition:opacity 2s ease, transform 2s ease; }
+  .ending.visible { opacity:1; transform:translateY(0); }
+  .ending p { max-width:340px; font-size:clamp(20px,5.2vw,28px); line-height:1.55; font-weight:normal; margin:0; text-shadow:0 0 22px rgba(245,169,201,.25); }
+  .ending .small { font-family:system-ui,sans-serif; font-size:12px; letter-spacing:.16em; text-transform:uppercase; color:rgba(255,255,255,.58); margin-top:20px; }
+  .replay { pointer-events:auto; margin-top:25px; border:1px solid rgba(255,255,255,.32); background:transparent; color:#ddd; border-radius:24px; padding:10px 18px; font-size:12px; letter-spacing:.12em; }
+  @media (prefers-reduced-motion: reduce) { *,*::before,*::after { transition-duration:.01ms !important; } }
+</style>
+</head>
+<body>
+<canvas id="scene" aria-label="Um jardim crescendo lentamente"></canvas>
+<div class="start" id="start">
+  <button class="play" id="play" aria-label="Começar o jardim">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7 4.8c0-.8.9-1.3 1.6-.9l11 7.1a1.2 1.2 0 0 1 0 2L8.6 20.1c-.7.4-1.6-.1-1.6-.9z"/></svg>
+  </button>
+  <div class="hint">toque para começar</div>
+</div>
+<div class="ending" id="ending" aria-live="polite">
+  <p id="message">Se eu pudesse transformar todo o carinho que sinto por você em algo que pudesse ver, talvez fosse assim: um jardim inteiro, nascendo devagar, flor por flor, sem nunca perder a beleza de continuar crescendo. ❤️</p>
+  <div class="small">feito com carinho, para você</div>
+  <button class="replay" id="replay">VER DE NOVO</button>
+</div>
+<script>
+(() => {
+  const canvas = document.getElementById('scene'), ctx = canvas.getContext('2d');
+  const start = document.getElementById('start'), ending = document.getElementById('ending');
+  let w=0,h=0,dpr=1, running=false, startTime=0, raf=0, endingShown=false, flowers=[], motes=[], grass=[];
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function resize(){
+    dpr=Math.min(window.devicePixelRatio||1,2); w=innerWidth; h=innerHeight;
+    canvas.width=Math.round(w*dpr); canvas.height=Math.round(h*dpr);
+    canvas.style.width=w+'px'; canvas.style.height=h+'px'; ctx.setTransform(dpr,0,0,dpr,0,0);
+    makeGarden();
+    if(!running) drawIdle();
+  }
+  function rand(a,b){return a+Math.random()*(b-a)}
+  function makeGarden(){
+    flowers=[]; motes=[]; grass=[];
+    const count=Math.max(11,Math.min(23,Math.floor(w/22)));
+    for(let i=0;i<count;i++){
+      const x=w*(.06+.88*(i/(count-1)))+rand(-10,10);
+      flowers.push({x, base:h*rand(.69,.91), height:rand(h*.09,h*.23), delay:rand(3,17), size:rand(4.5,8.5), hue:[337,350,0,42,285,195,28][Math.floor(Math.random()*7)], type:['rose','tulip','lily','daisy'][Math.floor(Math.random()*4)], lean:rand(-.12,.12), bloom:rand(0,Math.PI*2)});
+    }
+    for(let i=0;i<Math.floor(w/3);i++) grass.push({x:rand(0,w), y:h*rand(.76,1.02), len:rand(5,20), lean:rand(-8,8), delay:rand(1,10)});
+    for(let i=0;i<48;i++) motes.push({x:rand(0,w), y:rand(h*.35,h), r:rand(.5,1.8), phase:rand(0,Math.PI*2), speed:rand(.2,.8), delay:rand(12,28)});
+  }
+  function drawIdle(){ctx.clearRect(0,0,w,h);ctx.fillStyle='#000';ctx.fillRect(0,0,w,h)}
+  function line(x1,y1,x2,y2,color,width=1){ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.strokeStyle=color;ctx.lineWidth=width;ctx.lineCap='round';ctx.stroke()}
+  function flower(f,t){
+    const progress=Math.max(0,Math.min(1,(t-f.delay)/5));
+    if(progress<=0)return;
+    const stemH=f.height*progress, sway=Math.sin(t*.72+f.bloom)*Math.min(5, w*.012);
+    const tipX=f.x+f.lean*stemH+sway, tipY=f.base-stemH;
+    ctx.save(); ctx.shadowColor='rgba(111,218,147,.28)';ctx.shadowBlur=5;
+    line(f.x,f.base,tipX,tipY,'rgba(113,190,133,.9)',1.35);
+    if(progress>.28){
+      const leafP=Math.min(1,(progress-.28)*2.7);
+      ctx.fillStyle='rgba(105,190,125,.88)';
+      for(const side of [-1,1]){
+        const lx=f.x+(tipX-f.x)*.48, ly=f.base-stemH*.48;
+        ctx.save();ctx.translate(lx,ly);ctx.rotate(side*.48);
+        ctx.beginPath();ctx.ellipse(side*5*leafP,0,5.8*leafP,2.5*leafP,side*.2,0,Math.PI*2);ctx.fill();ctx.restore();
+      }
+    }
+    ctx.restore();
+    if(progress>.76){
+      const bloom=Math.min(1,(progress-.76)*4.2), pulse=1+Math.sin(t*1.5+f.bloom)*.025;
+      const petalColor=`hsla(${f.hue},${f.hue===42?82:76}%,${f.hue===42?78:76}%,.96)`;
+      ctx.save();ctx.translate(tipX,tipY);ctx.scale(bloom*pulse,bloom*pulse);
+      ctx.shadowColor=petalColor;ctx.shadowBlur=10;
+      if(f.type==='tulip'){
+        // Tulip: cup-shaped petals rising upward.
+        for(let i=-1;i<=1;i++){
+          ctx.save();ctx.rotate(i*.28);
+          ctx.beginPath();ctx.moveTo(0,3);ctx.bezierCurveTo(-f.size*1.15,-f.size*.25,-f.size*.95,-f.size*2.1,0,-f.size*1.65);
+          ctx.bezierCurveTo(f.size*.95,-f.size*2.1,f.size*1.15,-f.size*.25,0,3);
+          ctx.fillStyle=petalColor;ctx.fill();ctx.restore();
+        }
+        ctx.beginPath();ctx.ellipse(0,-f.size*.75, f.size*.22,f.size*.65,0,0,Math.PI*2);ctx.fillStyle=`hsla(${f.hue},80%,88%,.8)`;ctx.fill();
+      } else if(f.type==='lily'){
+        // Lily: long, pointed petals.
+        for(let i=0;i<6;i++){
+          ctx.save();ctx.rotate(i*Math.PI/3);
+          ctx.beginPath();ctx.moveTo(0,1);ctx.quadraticCurveTo(-f.size*.95,-f.size*.75,0,-f.size*2.15);
+          ctx.quadraticCurveTo(f.size*.95,-f.size*.75,0,1);
+          ctx.fillStyle=petalColor;ctx.fill();ctx.restore();
+        }
+        ctx.beginPath();ctx.arc(0,0,f.size*.28,0,Math.PI*2);ctx.fillStyle='#f5d98e';ctx.fill();
+      } else if(f.type==='rose'){
+        // Rose: layered overlapping petals.
+        for(let layer=0;layer<3;layer++){
+          const n=layer===0?5:7, r=f.size*(.42+layer*.24);
+          for(let i=0;i<n;i++){
+            ctx.save();ctx.rotate(i*Math.PI*2/n+layer*.22);
+            ctx.beginPath();ctx.ellipse(0,-r*.48,f.size*(.42-layer*.055),f.size*(.48-layer*.04),0,0,Math.PI*2);
+            ctx.fillStyle=`hsla(${f.hue},${76-layer*5}%,${72+layer*4}%,.96)`;ctx.fill();ctx.restore();
+          }
+        }
+        ctx.beginPath();ctx.arc(0,0,f.size*.32,0,Math.PI*2);ctx.fillStyle=`hsla(${f.hue},70%,62%,1)`;ctx.fill();
+      } else {
+        // Daisy-like flower with a warm center.
+        for(let i=0;i<8;i++){ctx.save();ctx.rotate(i*Math.PI/4);ctx.beginPath();ctx.ellipse(0,-f.size*.9,f.size*.48,f.size*.88,0,0,Math.PI*2);ctx.fillStyle=petalColor;ctx.fill();ctx.restore();}
+        ctx.beginPath();ctx.arc(0,0,f.size*.42,0,Math.PI*2);ctx.fillStyle='#f6d88c';ctx.fill();
+      }
+      ctx.restore();
+    }
+  }
+  function draw(t){
+    ctx.clearRect(0,0,w,h);ctx.fillStyle='#000';ctx.fillRect(0,0,w,h);
+    // Very subtle pool of light at the bottom, never a pre-made scene.
+    const glow=ctx.createRadialGradient(w*.5,h*.92,0,w*.5,h*.92,h*.48);
+    glow.addColorStop(0,`rgba(32,66,40,${Math.min(.17,t/35*.17)})`);glow.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=glow;ctx.fillRect(0,0,w,h);
+    const groundY=h*.91;
+    const groundAlpha=Math.min(.38,t/13*.38);
+    line(0,groundY,w,groundY,`rgba(104,151,111,${groundAlpha})`,.6);
+    grass.forEach(g=>{
+      const p=Math.max(0,Math.min(1,(t-g.delay)/4)); if(!p)return;
+      const x=g.x,y=Math.min(h,g.y), len=g.len*p;
+      line(x,y,x+g.lean*p+Math.sin(t*.8+g.x)*2*p,y-len,`rgba(103,174,116,${.28*p})`,.8);
+    });
+    flowers.forEach(f=>flower(f,t));
+    motes.forEach(m=>{
+      const p=Math.max(0,Math.min(1,(t-m.delay)/5)); if(!p)return;
+      const x=m.x+Math.sin(t*m.speed+m.phase)*8, y=m.y-t*1.2*m.speed%Math.max(h,1);
+      const alpha=(.18+.35*(.5+.5*Math.sin(t+m.phase)))*p;
+      ctx.beginPath();ctx.arc(x,y,m.r,0,Math.PI*2);ctx.fillStyle=`rgba(244,222,174,${alpha})`;ctx.fill();
+    });
+    if(t>=31 && !endingShown){ endingShown=true; setTimeout(()=>ending.classList.add('visible'),800); }
+    // Keep the garden gently alive behind the final message.
+    raf=requestAnimationFrame(frame);
+  }
+  function frame(now){ if(!running)return; draw((now-startTime)/1000); }
+  function begin(){
+    cancelAnimationFrame(raf); running=true; endingShown=false; startTime=performance.now();
+    start.classList.add('hidden'); ending.classList.remove('visible');
+    if(reduced){ startTime=performance.now()-30000; }
+    raf=requestAnimationFrame(frame);
+  }
+  document.getElementById('play').addEventListener('click',begin);
+  document.getElementById('replay').addEventListener('click',()=>{
+    running=false; ending.classList.remove('visible'); start.classList.remove('hidden'); drawIdle();
+  });
+  addEventListener('resize',resize,{passive:true}); resize();
+})();
+</script>
+</body>
+</html>
